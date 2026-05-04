@@ -11,6 +11,8 @@ const state = {
     roundBank: 0,
     totalBank: 0,
     round: 1,
+    eliminateEachRound: true,
+    eliminatedPlayerIndex: "",
     timerRemaining: DEFAULT_TIMER_SECONDS,
     timerStopped: true,
     intervalId: null,
@@ -39,6 +41,8 @@ function cacheElements() {
     elements.playersList = document.getElementById("players-list");
     elements.startingPlayer = document.getElementById("starting-player");
     elements.timerSeconds = document.getElementById("timer-seconds");
+    elements.eliminateEachRound = document.getElementById("eliminate-each-round");
+    elements.startGameButton = document.getElementById("start-game");
     elements.prizesList = document.getElementById("prizes-list");
     elements.setupError = document.getElementById("setup-error");
     elements.time = document.getElementById("time");
@@ -54,6 +58,10 @@ function cacheElements() {
     elements.statsRoundEarned = document.getElementById("stats-round-earned");
     elements.statsTotalBank = document.getElementById("stats-total-bank");
     elements.statsRows = document.getElementById("stats-rows");
+    elements.eliminationCard = document.getElementById("elimination-card");
+    elements.eliminatedPlayer = document.getElementById("eliminated-player");
+    elements.eliminationError = document.getElementById("elimination-error");
+    elements.nextRoundButton = document.getElementById("next-round");
     elements.strongestPlayerName = document.getElementById("strongest-player-name");
     elements.strongestPlayerCorrect = document.getElementById("strongest-player-correct");
     elements.strongestPlayerWrong = document.getElementById("strongest-player-wrong");
@@ -77,13 +85,23 @@ function bindSetupEvents() {
         renderSetup();
     });
 
-    document.getElementById("start-game").addEventListener("click", startGameFromSetup);
+    elements.startGameButton.addEventListener("click", startGameFromSetup);
     document.getElementById("back-to-setup").addEventListener("click", returnToSetup);
     document.getElementById("go-to-stats").addEventListener("click", goToStatisticsScreen);
-    document.getElementById("next-round").addEventListener("click", startNextRound);
+    elements.nextRoundButton.addEventListener("click", startNextRound);
 
     elements.timerSeconds.addEventListener("change", (event) => {
         elements.timerSeconds.value = sanitizeTimerValue(event.target.value);
+    });
+
+    elements.eliminateEachRound.addEventListener("change", (event) => {
+        state.eliminateEachRound = event.target.checked;
+    });
+
+    elements.eliminatedPlayer.addEventListener("change", (event) => {
+        state.eliminatedPlayerIndex = event.target.value;
+        elements.eliminationError.textContent = "";
+        updateNextRoundButtonLabel();
     });
 }
 
@@ -122,6 +140,8 @@ function renderSetup() {
     renderStartingPlayerOptions();
     renderPrizesList();
     elements.timerSeconds.value = state.timerSeconds;
+    elements.eliminateEachRound.checked = state.eliminateEachRound;
+    updateStartGameButtonLabel();
 }
 
 function renderPlayersList() {
@@ -163,7 +183,6 @@ function renderPlayersList() {
 }
 
 function renderStartingPlayerOptions() {
-    const previousValue = elements.startingPlayer.value;
     elements.startingPlayer.innerHTML = "";
 
     state.players.forEach((player, index) => {
@@ -173,11 +192,9 @@ function renderStartingPlayerOptions() {
         elements.startingPlayer.appendChild(option);
     });
 
-    const nextValue = previousValue && Number(previousValue) < state.players.length
-        ? previousValue
-        : String(state.startingPlayerIndex);
-
-    elements.startingPlayer.value = nextValue;
+    state.startingPlayerIndex = getAlphabeticalFirstPlayerIndex(state.players);
+    elements.startingPlayer.value = String(state.startingPlayerIndex);
+    updateStartGameButtonLabel();
 }
 
 function renderPrizesList() {
@@ -220,7 +237,9 @@ function startGameFromSetup() {
     state.players = cleanedPlayers;
     state.prizes = prizes;
     state.timerSeconds = timerValue;
-    state.startingPlayerIndex = clampStartingPlayerIndex(elements.startingPlayer.value, state.players.length);
+    state.eliminateEachRound = elements.eliminateEachRound.checked;
+    state.eliminatedPlayerIndex = "";
+    state.startingPlayerIndex = getAlphabeticalFirstPlayerIndex(state.players);
     state.currentPlayerIndex = state.startingPlayerIndex;
     state.round = 1;
     state.totalBank = 0;
@@ -252,12 +271,13 @@ function switchScreen(screenName) {
 
 function initializeRoundState() {
     state.currentPlayerIndex = state.startingPlayerIndex;
-    state.currentStep = 0;
+    state.currentStep = state.prizes.length > 0 ? 1 : 0;
     state.roundBank = 0;
     state.timerRemaining = state.timerSeconds;
     state.timerStopped = true;
     state.roundEnded = false;
     state.roundEndReason = "";
+    state.eliminatedPlayerIndex = "";
     state.roundPlayerStats = createRoundPlayerStats();
     state.rankedRoundStats = [];
     elements.roundEndPanel.classList.add("hidden");
@@ -341,7 +361,7 @@ function startTimer() {
         }
 
         if (state.timerRemaining <= 0) {
-            endRound("Le chrono est ecoule.");
+            endRoundFromTimer();
             return;
         }
 
@@ -349,9 +369,21 @@ function startTimer() {
         updateTimerDisplay();
 
         if (state.timerRemaining <= 0) {
-            endRound("Le chrono est ecoule.");
+            endRoundFromTimer();
         }
     }, 1000);
+}
+
+function endRoundFromTimer() {
+    const playerStats = getCurrentPlayerStats();
+    const bankableAmount = getBankableChainAmount();
+    const cappedLostAmount = getCappedAmount(bankableAmount);
+
+    if (playerStats && cappedLostAmount > 0) {
+        playerStats.lost += cappedLostAmount;
+    }
+
+    endRound("Le chrono est ecoule.");
 }
 
 function toggleTimer() {
@@ -382,13 +414,13 @@ function handleCorrectAnswer() {
 
 function handleBank() {
     const playerStats = getCurrentPlayerStats();
-    const chainAmount = getCurrentChainAmount();
+    const bankableAmount = getBankableChainAmount();
 
-    if (chainAmount <= 0) {
+    if (bankableAmount <= 0) {
         return;
     }
 
-    const cappedAmount = getCappedAmount(chainAmount);
+    const cappedAmount = getCappedAmount(bankableAmount);
 
     applyBankGain(playerStats, cappedAmount);
 
@@ -401,8 +433,8 @@ function handleBank() {
 
 function handleWrongAnswer() {
     const playerStats = getCurrentPlayerStats();
-    const chainAmount = getCurrentChainAmount();
-    const cappedLostAmount = getCappedAmount(chainAmount);
+    const bankableAmount = getBankableChainAmount();
+    const cappedLostAmount = getCappedAmount(bankableAmount);
 
     playerStats.wrong += 1;
     playerStats.lost += cappedLostAmount;
@@ -458,6 +490,8 @@ function renderStatistics() {
     renderHighlightCard(strongestPlayer, "strongest");
     renderHighlightCard(weakestPlayer, "weakest");
     renderStatsRows(rankedStats);
+    renderEliminationPicker();
+    updateNextRoundButtonLabel();
 }
 
 function renderHighlightCard(playerStats, prefix) {
@@ -490,6 +524,45 @@ function renderStatsRows(rankedStats) {
     });
 }
 
+function renderEliminationPicker() {
+    const shouldAskForElimination = state.eliminateEachRound && state.players.length > 1;
+    elements.eliminationCard.classList.toggle("hidden", !shouldAskForElimination);
+    elements.eliminationError.textContent = "";
+
+    if (!shouldAskForElimination) {
+        state.eliminatedPlayerIndex = "";
+        elements.eliminatedPlayer.innerHTML = "";
+        return;
+    }
+
+    elements.eliminatedPlayer.innerHTML = "";
+
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Selectionner un joueur";
+    elements.eliminatedPlayer.appendChild(placeholder);
+
+    state.players.forEach((player, index) => {
+        const option = document.createElement("option");
+        option.value = String(index);
+        option.textContent = player;
+        elements.eliminatedPlayer.appendChild(option);
+    });
+
+    state.eliminatedPlayerIndex = "";
+    elements.eliminatedPlayer.value = state.eliminatedPlayerIndex;
+}
+
+function updateStartGameButtonLabel() {
+    const playerName = getPlayerNameByIndex(state.startingPlayerIndex);
+    elements.startGameButton.textContent = `Lancer partie - ${playerName} commence`;
+}
+
+function updateNextRoundButtonLabel() {
+    const playerName = getNextStartingPlayerNamePreview();
+    elements.nextRoundButton.textContent = `Manche suivante - ${playerName} commence`;
+}
+
 function rankRoundStats() {
     return [...state.roundPlayerStats].sort((leftPlayer, rightPlayer) => {
         if (rightPlayer.correct !== leftPlayer.correct) {
@@ -509,11 +582,33 @@ function rankRoundStats() {
 }
 
 function startNextRound() {
+    if (!applyRoundElimination()) {
+        return;
+    }
+
+    state.startingPlayerIndex = getNextStartingPlayerIndexFromPreviousRanking();
     state.round += 1;
+    state.timerSeconds = Math.max(10, state.timerSeconds - 10);
     initializeRoundState();
     switchScreen("game");
     syncGameBoard();
     startTimer();
+}
+
+function applyRoundElimination() {
+    if (!state.eliminateEachRound || state.players.length <= 1) {
+        return true;
+    }
+
+    const eliminatedIndex = Number.parseInt(state.eliminatedPlayerIndex, 10);
+
+    if (Number.isNaN(eliminatedIndex) || eliminatedIndex < 0 || eliminatedIndex >= state.players.length) {
+        elements.eliminationError.textContent = "Choisis le joueur elimine avant de lancer la manche suivante.";
+        return false;
+    }
+
+    state.players.splice(eliminatedIndex, 1);
+    return true;
 }
 
 function moveToNextPlayer() {
@@ -524,12 +619,12 @@ function getCurrentPlayerStats() {
     return state.roundPlayerStats[state.currentPlayerIndex];
 }
 
-function getCurrentChainAmount() {
-    if (state.currentStep <= 0) {
+function getBankableChainAmount() {
+    if (state.currentStep <= 1) {
         return 0;
     }
 
-    return state.prizes[state.currentStep - 1] || 0;
+    return state.prizes[state.currentStep - 2] || 0;
 }
 
 function getRoundMaximum() {
@@ -549,6 +644,59 @@ function normalizePlayerName(player, index) {
     return trimmed || `Joueur ${index + 1}`;
 }
 
+function getAlphabeticalFirstPlayerIndex(players) {
+    if (players.length === 0) {
+        return 0;
+    }
+
+    return players
+        .map((player, index) => ({
+            index,
+            name: normalizePlayerName(player, index)
+        }))
+        .sort((leftPlayer, rightPlayer) => leftPlayer.name.localeCompare(rightPlayer.name, "fr", { sensitivity: "base" }))[0].index;
+}
+
+function getNextStartingPlayerIndexFromPreviousRanking() {
+    return getNextStartingPlayerIndexFromPlayers(state.players);
+}
+
+function getNextStartingPlayerIndexFromPlayers(players) {
+    const firstAvailableRankedPlayer = state.rankedRoundStats.find((playerStats) => players.includes(playerStats.name));
+
+    if (!firstAvailableRankedPlayer) {
+        return getAlphabeticalFirstPlayerIndex(players);
+    }
+
+    return players.indexOf(firstAvailableRankedPlayer.name);
+}
+
+function getNextStartingPlayerNamePreview() {
+    const playersAfterElimination = getPlayersAfterPendingElimination();
+    const nextStartingPlayerIndex = getNextStartingPlayerIndexFromPlayers(playersAfterElimination);
+    return playersAfterElimination[nextStartingPlayerIndex] || "-";
+}
+
+function getPlayersAfterPendingElimination() {
+    const players = [...state.players];
+
+    if (!state.eliminateEachRound || players.length <= 1) {
+        return players;
+    }
+
+    const eliminatedIndex = Number.parseInt(state.eliminatedPlayerIndex, 10);
+
+    if (!Number.isNaN(eliminatedIndex) && eliminatedIndex >= 0 && eliminatedIndex < players.length) {
+        players.splice(eliminatedIndex, 1);
+    }
+
+    return players;
+}
+
+function getPlayerNameByIndex(index) {
+    return state.players[index] || "-";
+}
+
 function sanitizeTimerValue(rawValue) {
     const parsed = Number.parseInt(rawValue, 10);
 
@@ -562,14 +710,4 @@ function sanitizeTimerValue(rawValue) {
 function sanitizePrizeValue(rawValue) {
     const parsed = Number.parseInt(rawValue, 10);
     return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
-}
-
-function clampStartingPlayerIndex(rawValue, playersCount) {
-    const parsed = Number.parseInt(rawValue, 10);
-
-    if (Number.isNaN(parsed) || parsed < 0 || parsed >= playersCount) {
-        return 0;
-    }
-
-    return parsed;
 }

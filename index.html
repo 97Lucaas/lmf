@@ -29,8 +29,8 @@
                         </div>
                         <div id="players-list" class="players-list"></div>
                         <label class="field">
-                            <span>Le joueur qui commence</span>
-                            <select id="starting-player"></select>
+                            <span>Depart de la premiere manche</span>
+                            <select id="starting-player" disabled></select>
                         </label>
                     </section>
 
@@ -41,6 +41,10 @@
                             <input id="timer-seconds" type="number" min="10" step="10" value="150">
                         </label>
                         <p class="hint">Le temps se regle par pas de 10 secondes.</p>
+                        <label class="check-field">
+                            <input id="eliminate-each-round" type="checkbox" checked>
+                            <span>Eliminer un joueur a chaque manche</span>
+                        </label>
                         <div class="keybinds">
                             <p>Raccourcis disponibles</p>
                             <ul>
@@ -173,6 +177,15 @@
                             <tbody id="stats-rows"></tbody>
                         </table>
                     </div>
+                </div>
+
+                <div class="setup-card elimination-card hidden" id="elimination-card">
+                    <h2>Joueur elimine</h2>
+                    <label class="field">
+                        <span>Choisis qui quitte la partie a la fin de cette manche</span>
+                        <select id="eliminated-player"></select>
+                    </label>
+                    <p id="elimination-error" class="error-message" aria-live="polite"></p>
                 </div>
 
                 <div class="setup-card highlight-card weak-card" id="weakest-player-card">
