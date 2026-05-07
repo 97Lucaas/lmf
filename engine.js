@@ -16,6 +16,7 @@ const state = {
     timerRemaining: DEFAULT_TIMER_SECONDS,
     timerStopped: true,
     intervalId: null,
+    roundAudio: null,
     gameStarted: false,
     roundEnded: false,
     roundEndReason: "",
@@ -258,6 +259,7 @@ function returnToSetup() {
     state.roundEnded = false;
     clearInterval(state.intervalId);
     state.intervalId = null;
+    stopRoundAudio();
     switchScreen("setup");
     renderSetup();
 }
@@ -281,6 +283,7 @@ function initializeRoundState() {
     state.roundPlayerStats = createRoundPlayerStats();
     state.rankedRoundStats = [];
     elements.roundEndPanel.classList.add("hidden");
+    prepareRoundAudio();
 }
 
 function createRoundPlayerStats() {
@@ -354,6 +357,7 @@ function startTimer() {
     clearInterval(state.intervalId);
     state.timerStopped = false;
     updateTimerDisplay();
+    playRoundAudio();
 
     state.intervalId = window.setInterval(() => {
         if (state.timerStopped || state.roundEnded) {
@@ -388,6 +392,12 @@ function endRoundFromTimer() {
 
 function toggleTimer() {
     state.timerStopped = !state.timerStopped;
+
+    if (state.timerStopped) {
+        pauseRoundAudio();
+    } else {
+        playRoundAudio();
+    }
 }
 
 function handleCorrectAnswer() {
@@ -471,6 +481,38 @@ function endRound(reason) {
     state.intervalId = null;
     elements.roundEndTitle.textContent = `La manche ${state.round} est terminee`;
     syncGameBoard();
+}
+
+function prepareRoundAudio() {
+    stopRoundAudio();
+    state.roundAudio = new Audio(`sounds/${state.timerSeconds}.mp3`);
+    state.roundAudio.preload = "auto";
+}
+
+function playRoundAudio() {
+    if (!state.roundAudio) {
+        return;
+    }
+
+    state.roundAudio.play().catch(() => {
+        pauseRoundAudio();
+    });
+}
+
+function pauseRoundAudio() {
+    if (state.roundAudio) {
+        state.roundAudio.pause();
+    }
+}
+
+function stopRoundAudio() {
+    if (!state.roundAudio) {
+        return;
+    }
+
+    state.roundAudio.pause();
+    state.roundAudio.currentTime = 0;
+    state.roundAudio = null;
 }
 
 function goToStatisticsScreen() {
