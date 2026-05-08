@@ -6,8 +6,14 @@ const AMBIENCE_TRACKS = {
     penalty: "sounds/Penalty_Shootout.mp3",
     suddenDeath: "sounds/sudden_death.mp3"
 };
+const EFFECT_TRACKS = {
+    separator: "sounds/separator.mp3",
+    walkOfShame: "sounds/Walk_Of_Shame.mp3",
+    win: "sounds/win.mp3"
+};
 
 const state = {
+    registeredPlayers: ["Joueur 1", "Joueur 2"],
     players: ["Joueur 1", "Joueur 2"],
     basePrizes: [...DEFAULT_PRIZES],
     prizes: [...DEFAULT_PRIZES],
@@ -42,7 +48,11 @@ const state = {
     finalWaitingForSuddenDeath: false,
     finalResults: [],
     suddenDeathRound: 0,
-    finalWinner: ""
+    finalWinner: "",
+    effectAudio: null,
+    buttonTransitionInProgress: false,
+    pendingEliminationIndex: null,
+    walkOfShamePlayerName: ""
 };
 
 const elements = {};
@@ -60,6 +70,7 @@ function cacheElements() {
     elements.setupScreen = document.getElementById("setup-screen");
     elements.gameScreen = document.getElementById("game-screen");
     elements.statsScreen = document.getElementById("stats-screen");
+    elements.walkScreen = document.getElementById("walk-screen");
     elements.finalScreen = document.getElementById("final-screen");
     elements.playersList = document.getElementById("players-list");
     elements.startingPlayer = document.getElementById("starting-player");
@@ -85,6 +96,9 @@ function cacheElements() {
     elements.eliminatedPlayer = document.getElementById("eliminated-player");
     elements.eliminationError = document.getElementById("elimination-error");
     elements.nextRoundButton = document.getElementById("next-round");
+    elements.walkTitle = document.getElementById("walk-title");
+    elements.walkCopy = document.getElementById("walk-copy");
+    elements.walkNextRoundButton = document.getElementById("walk-next-round");
     elements.finalTitle = document.getElementById("final-title");
     elements.finalStatus = document.getElementById("final-status");
     elements.finalChoiceCard = document.getElementById("final-choice-card");
@@ -97,6 +111,9 @@ function cacheElements() {
     elements.finalCurrentPlayer = document.getElementById("final-current-player");
     elements.finalSuddenCard = document.getElementById("final-sudden-card");
     elements.startSuddenDeath = document.getElementById("start-sudden-death");
+    elements.finalWinCard = document.getElementById("final-win-card");
+    elements.finalWinnerName = document.getElementById("final-winner-name");
+    elements.playAgain = document.getElementById("play-again");
     elements.strongestPlayerName = document.getElementById("strongest-player-name");
     elements.strongestPlayerCorrect = document.getElementById("strongest-player-correct");
     elements.strongestPlayerWrong = document.getElementById("strongest-player-wrong");
@@ -110,25 +127,27 @@ function cacheElements() {
 }
 
 function bindSetupEvents() {
-    document.getElementById("add-player").addEventListener("click", () => {
+    bindButtonAction(document.getElementById("add-player"), () => {
         state.players.push("Nouveau joueur");
         savePlayers();
         renderSetup();
-    });
+    }, { separatorMode: "none" });
 
-    document.getElementById("reset-prizes").addEventListener("click", () => {
+    bindButtonAction(document.getElementById("reset-prizes"), () => {
         state.basePrizes = [...DEFAULT_PRIZES];
         state.prizes = [...DEFAULT_PRIZES];
         renderSetup();
-    });
+    }, { separatorMode: "none" });
 
-    elements.startGameButton.addEventListener("click", startGameFromSetup);
-    document.getElementById("back-to-setup").addEventListener("click", returnToSetup);
-    document.getElementById("go-to-stats").addEventListener("click", goToStatisticsScreen);
-    elements.nextRoundButton.addEventListener("click", startNextRound);
-    elements.finalTakeHand.addEventListener("click", () => startFinal(true));
-    elements.finalLeaveHand.addEventListener("click", () => startFinal(false));
-    elements.startSuddenDeath.addEventListener("click", startSuddenDeath);
+    bindButtonAction(elements.startGameButton, startGameFromSetup);
+    bindButtonAction(document.getElementById("back-to-setup"), returnToSetup);
+    bindButtonAction(document.getElementById("go-to-stats"), goToStatisticsScreen, { separatorMode: "none" });
+    bindButtonAction(elements.nextRoundButton, startNextRound);
+    bindButtonAction(elements.walkNextRoundButton, advanceFromWalkOfShame);
+    bindButtonAction(elements.finalTakeHand, () => startFinal(true), { separatorMode: "none" });
+    bindButtonAction(elements.finalLeaveHand, () => startFinal(false), { separatorMode: "none" });
+    bindButtonAction(elements.startSuddenDeath, startSuddenDeath, { separatorMode: "none" });
+    bindButtonAction(elements.playAgain, returnToSetup, { separatorMode: "none" });
 
     elements.timerSeconds.addEventListener("change", (event) => {
         elements.timerSeconds.value = sanitizeTimerValue(event.target.value);
@@ -142,6 +161,50 @@ function bindSetupEvents() {
         state.eliminatedPlayerIndex = event.target.value;
         elements.eliminationError.textContent = "";
         updateNextRoundButtonLabel();
+    });
+}
+
+function bindButtonAction(button, handler, options = {}) {
+    if (!button) {
+        return;
+    }
+
+    button.addEventListener("click", async () => {
+        if (state.buttonTransitionInProgress) {
+            return;
+        }
+
+        state.buttonTransitionInProgress = true;
+
+        try {
+            stopTransitionAudio();
+            const handlerResult = await handler();
+            await waitForNextPaint();
+            const skipSeparator = Boolean(handlerResult && handlerResult.skipSeparator);
+            const afterSeparator = typeof handlerResult === "function"
+                ? handlerResult
+                : handlerResult && typeof handlerResult.afterSeparator === "function"
+                    ? handlerResult.afterSeparator
+                    : null;
+
+            if (options.separatorMode !== "none" && !skipSeparator) {
+                await playOneShotAudio(EFFECT_TRACKS.separator);
+            }
+
+            if (afterSeparator) {
+                await afterSeparator();
+            }
+        } finally {
+            state.buttonTransitionInProgress = false;
+        }
+    });
+}
+
+function waitForNextPaint() {
+    return new Promise((resolve) => {
+        window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(resolve);
+        });
     });
 }
 
@@ -190,6 +253,7 @@ function bindKeyboardEvents() {
 }
 
 function renderSetup() {
+    state.players = [...state.registeredPlayers];
     state.prizes = [...state.basePrizes];
     renderPlayersList();
     renderStartingPlayerOptions();
@@ -202,7 +266,7 @@ function renderSetup() {
 function renderPlayersList() {
     elements.playersList.innerHTML = "";
 
-    state.players.forEach((player, index) => {
+    state.registeredPlayers.forEach((player, index) => {
         const row = document.createElement("div");
         row.className = "player-row";
 
@@ -211,7 +275,7 @@ function renderPlayersList() {
         input.value = player;
         input.placeholder = "Prenom du joueur";
         input.addEventListener("input", (event) => {
-            state.players[index] = event.target.value;
+            state.registeredPlayers[index] = event.target.value;
             savePlayers();
             renderStartingPlayerOptions();
         });
@@ -219,19 +283,19 @@ function renderPlayersList() {
         const removeButton = document.createElement("button");
         removeButton.type = "button";
         removeButton.textContent = "Supprimer";
-        removeButton.disabled = state.players.length === 1;
-        removeButton.addEventListener("click", () => {
-            if (state.players.length === 1) {
+        removeButton.disabled = state.registeredPlayers.length === 1;
+        bindButtonAction(removeButton, () => {
+            if (state.registeredPlayers.length === 1) {
                 return;
             }
 
-            state.players.splice(index, 1);
+            state.registeredPlayers.splice(index, 1);
             savePlayers();
-            if (state.currentPlayerIndex >= state.players.length) {
+            if (state.currentPlayerIndex >= state.registeredPlayers.length) {
                 state.currentPlayerIndex = 0;
             }
             renderSetup();
-        });
+        }, { separatorMode: "none" });
 
         row.appendChild(input);
         row.appendChild(removeButton);
@@ -242,14 +306,14 @@ function renderPlayersList() {
 function renderStartingPlayerOptions() {
     elements.startingPlayer.innerHTML = "";
 
-    state.players.forEach((player, index) => {
+    state.registeredPlayers.forEach((player, index) => {
         const option = document.createElement("option");
         option.value = String(index);
         option.textContent = normalizePlayerName(player, index);
         elements.startingPlayer.appendChild(option);
     });
 
-    state.startingPlayerIndex = getAlphabeticalFirstPlayerIndex(state.players);
+    state.startingPlayerIndex = getAlphabeticalFirstPlayerIndex(state.registeredPlayers);
     elements.startingPlayer.value = String(state.startingPlayerIndex);
     updateStartGameButtonLabel();
 }
@@ -283,7 +347,7 @@ function renderPrizesList() {
 }
 
 function startGameFromSetup() {
-    const cleanedPlayers = state.players.map((player, index) => normalizePlayerName(player, index));
+    const cleanedPlayers = state.registeredPlayers.map((player, index) => normalizePlayerName(player, index));
     const timerValue = sanitizeTimerValue(elements.timerSeconds.value);
     const prizes = Array.from(elements.prizesList.querySelectorAll("input")).map((input) => sanitizePrizeValue(input.value));
 
@@ -292,7 +356,8 @@ function startGameFromSetup() {
         return;
     }
 
-    state.players = cleanedPlayers;
+    state.registeredPlayers = cleanedPlayers;
+    state.players = [...cleanedPlayers];
     savePlayers();
     state.basePrizes = prizes;
     state.timerSeconds = timerValue;
@@ -305,6 +370,8 @@ function startGameFromSetup() {
     state.finalReady = false;
     state.finalists = [];
     state.finalWinner = "";
+    state.pendingEliminationIndex = null;
+    state.walkOfShamePlayerName = "";
     state.gameStarted = true;
     elements.setupError.textContent = "";
 
@@ -312,17 +379,21 @@ function startGameFromSetup() {
     initializeRoundState();
     switchScreen("game");
     syncGameBoard();
-    startTimer();
+    return startTimer;
 }
 
 function returnToSetup() {
     state.gameStarted = false;
     state.timerStopped = true;
     state.roundEnded = false;
+    state.pendingEliminationIndex = null;
+    state.walkOfShamePlayerName = "";
     clearInterval(state.intervalId);
     state.intervalId = null;
+    state.players = [...state.registeredPlayers];
     stopRoundAudio();
     stopAmbienceAudio();
+    stopEffectAudio();
     switchScreen("setup");
     renderSetup();
 }
@@ -332,6 +403,7 @@ function switchScreen(screenName) {
     elements.setupScreen.classList.toggle("hidden", screenName !== "setup");
     elements.gameScreen.classList.toggle("hidden", screenName !== "game");
     elements.statsScreen.classList.toggle("hidden", screenName !== "stats");
+    elements.walkScreen.classList.toggle("hidden", screenName !== "walk");
     elements.finalScreen.classList.toggle("hidden", screenName !== "final");
 }
 
@@ -346,6 +418,8 @@ function initializeRoundState() {
     state.roundEnded = false;
     state.roundEndReason = "";
     state.eliminatedPlayerIndex = "";
+    state.pendingEliminationIndex = null;
+    state.walkOfShamePlayerName = "";
     state.roundPlayerStats = createRoundPlayerStats();
     state.rankedRoundStats = [];
     elements.roundEndPanel.classList.add("hidden");
@@ -419,11 +493,17 @@ function updateRoundEndPanel() {
     }
 }
 
-function startTimer() {
+async function startTimer() {
     clearInterval(state.intervalId);
-    state.timerStopped = false;
+    state.timerStopped = true;
     updateTimerDisplay();
-    playRoundAudio();
+    const playbackStarted = await playRoundAudio();
+
+    if (!playbackStarted || state.roundEnded) {
+        return;
+    }
+
+    state.timerStopped = false;
 
     state.intervalId = window.setInterval(() => {
         if (state.timerStopped || state.roundEnded) {
@@ -456,14 +536,19 @@ function endRoundFromTimer() {
     endRound("Le chrono est ecoule.");
 }
 
-function toggleTimer() {
-    state.timerStopped = !state.timerStopped;
-
+async function toggleTimer() {
     if (state.timerStopped) {
-        pauseRoundAudio();
-    } else {
-        playRoundAudio();
+        const playbackStarted = await playRoundAudio();
+
+        if (playbackStarted) {
+            state.timerStopped = false;
+        }
+
+        return;
     }
+
+    state.timerStopped = true;
+    pauseRoundAudio();
 }
 
 function handleCorrectAnswer() {
@@ -555,14 +640,18 @@ function prepareRoundAudio() {
     state.roundAudio.preload = "auto";
 }
 
-function playRoundAudio() {
+async function playRoundAudio() {
     if (!state.roundAudio) {
-        return;
+        return false;
     }
 
-    state.roundAudio.play().catch(() => {
+    try {
+        await state.roundAudio.play();
+        return true;
+    } catch (error) {
         pauseRoundAudio();
-    });
+        return false;
+    }
 }
 
 function pauseRoundAudio() {
@@ -579,6 +668,74 @@ function stopRoundAudio() {
     state.roundAudio.pause();
     state.roundAudio.currentTime = 0;
     state.roundAudio = null;
+}
+
+function stopEffectAudio() {
+    if (!state.effectAudio) {
+        return;
+    }
+
+    state.effectAudio.pause();
+    state.effectAudio.currentTime = 0;
+    state.effectAudio = null;
+}
+
+function stopTransitionAudio() {
+    stopRoundAudio();
+    stopAmbienceAudio();
+    stopEffectAudio();
+}
+
+function playOneShotAudio(track) {
+    return new Promise((resolve) => {
+        if (!track) {
+            resolve();
+            return;
+        }
+
+        stopEffectAudio();
+        const audio = new Audio(track);
+        state.effectAudio = audio;
+        audio.preload = "auto";
+
+        const finish = () => {
+            if (state.effectAudio === audio) {
+                state.effectAudio = null;
+            }
+            resolve();
+        };
+
+        audio.addEventListener("ended", finish, { once: true });
+        audio.addEventListener("error", finish, { once: true });
+        audio.play().catch(finish);
+    });
+}
+
+function playScreenEffect(track) {
+    stopEffectAudio();
+
+    if (!track) {
+        return;
+    }
+
+    const audio = new Audio(track);
+    state.effectAudio = audio;
+    audio.preload = "auto";
+    audio.addEventListener("ended", () => {
+        if (state.effectAudio === audio) {
+            state.effectAudio = null;
+        }
+    }, { once: true });
+    audio.addEventListener("error", () => {
+        if (state.effectAudio === audio) {
+            state.effectAudio = null;
+        }
+    }, { once: true });
+    audio.play().catch(() => {
+        if (state.effectAudio === audio) {
+            state.effectAudio = null;
+        }
+    });
 }
 
 function playAmbienceAudio(track) {
@@ -620,12 +777,12 @@ function goToStatisticsScreen() {
     }
     renderStatistics();
     stopRoundAudio();
+    switchScreen("stats");
     if (state.finalReady) {
         stopAmbienceAudio();
     } else {
         playAmbienceAudio(AMBIENCE_TRACKS.voting);
     }
-    switchScreen("stats");
 }
 
 function renderStatistics() {
@@ -674,11 +831,11 @@ function renderStatsRows(rankedStats) {
 }
 
 function renderEliminationPicker() {
-    const shouldAskForElimination = state.eliminateEachRound && state.players.length > 1 && !state.finalReady;
-    elements.eliminationCard.classList.toggle("hidden", !shouldAskForElimination);
+    const needsElimination = shouldAskForElimination();
+    elements.eliminationCard.classList.toggle("hidden", !needsElimination);
     elements.eliminationError.textContent = "";
 
-    if (!shouldAskForElimination) {
+    if (!needsElimination) {
         state.eliminatedPlayerIndex = "";
         elements.eliminatedPlayer.innerHTML = "";
         return;
@@ -713,6 +870,11 @@ function updateNextRoundButtonLabel() {
         return;
     }
 
+    if (shouldAskForElimination()) {
+        elements.nextRoundButton.textContent = "Confirmer l'elimination";
+        return;
+    }
+
     const playerName = getNextStartingPlayerNamePreview();
     elements.nextRoundButton.textContent = `Manche suivante - ${playerName} commence`;
 }
@@ -737,14 +899,21 @@ function rankRoundStats() {
 
 function startNextRound() {
     if (state.finalReady) {
-        showFinalScreen();
-        return;
+        return showFinalScreen();
     }
 
-    if (!applyRoundElimination()) {
-        return;
+    if (shouldAskForElimination()) {
+        if (!prepareWalkOfShame()) {
+            return;
+        }
+
+        return showWalkOfShameScreen();
     }
 
+    return proceedToNextRound();
+}
+
+function proceedToNextRound() {
     state.startingPlayerIndex = getNextStartingPlayerIndexFromPreviousRanking();
     state.round += 1;
     state.timerSeconds = Math.max(10, state.timerSeconds - 10);
@@ -752,7 +921,47 @@ function startNextRound() {
     stopAmbienceAudio();
     switchScreen("game");
     syncGameBoard();
-    startTimer();
+    return startTimer;
+}
+
+function shouldAskForElimination() {
+    return state.eliminateEachRound && state.players.length > 1 && !state.finalReady;
+}
+
+function prepareWalkOfShame() {
+    const eliminatedIndex = Number.parseInt(state.eliminatedPlayerIndex, 10);
+
+    if (Number.isNaN(eliminatedIndex) || eliminatedIndex < 0 || eliminatedIndex >= state.players.length) {
+        elements.eliminationError.textContent = "Choisis le joueur elimine avant de confirmer l'elimination.";
+        return;
+    }
+
+    state.pendingEliminationIndex = eliminatedIndex;
+    state.walkOfShamePlayerName = state.players[eliminatedIndex] || "Ce joueur";
+    return true;
+}
+
+function showWalkOfShameScreen() {
+    const nextRoundNumber = state.round + 1;
+    const nextPlayerName = getNextStartingPlayerNamePreview();
+    elements.walkTitle.textContent = `${state.walkOfShamePlayerName}, vous etes le maillon faible, au revoir.`;
+    elements.walkCopy.textContent = `Passer a la manche ${nextRoundNumber} avec ${nextPlayerName} qui commence.`;
+    elements.walkNextRoundButton.textContent = `Passer a la manche ${nextRoundNumber} - ${nextPlayerName} commence`;
+    switchScreen("walk");
+    return {
+        skipSeparator: true,
+        afterSeparator: () => {
+            playScreenEffect(EFFECT_TRACKS.walkOfShame);
+        }
+    };
+}
+
+function advanceFromWalkOfShame() {
+    if (!applyRoundElimination()) {
+        return;
+    }
+
+    return proceedToNextRound();
 }
 
 function isFinalClassicRound() {
@@ -788,7 +997,6 @@ function showFinalScreen() {
     stopRoundAudio();
     resetFinalState();
     renderFinal();
-    playAmbienceAudio(AMBIENCE_TRACKS.penalty);
     switchScreen("final");
 }
 
@@ -815,6 +1023,7 @@ function startFinal(strongestTakesHand) {
     state.finalCurrentPlayerIndex = strongestTakesHand ? strongestIndex : getOtherFinalistIndex(strongestIndex);
     state.finalStarted = true;
     renderFinal();
+    playAmbienceAudio(AMBIENCE_TRACKS.penalty);
 }
 
 function answerFinalQuestion(isCorrect) {
@@ -871,6 +1080,8 @@ function answerFinalQuestion(isCorrect) {
 
 function concludeFinal(winnerName) {
     state.finalWinner = winnerName;
+    stopAmbienceAudio();
+    playScreenEffect(EFFECT_TRACKS.win);
     renderFinal();
 }
 
@@ -886,8 +1097,8 @@ function startSuddenDeath() {
     state.finalResults.forEach((playerResult) => {
         playerResult.suddenDeath = [];
     });
-    playAmbienceAudio(AMBIENCE_TRACKS.suddenDeath);
     renderFinal();
+    playAmbienceAudio(AMBIENCE_TRACKS.suddenDeath);
 }
 
 function renderFinal() {
@@ -897,6 +1108,8 @@ function renderFinal() {
     elements.finalChoiceCard.classList.toggle("hidden", state.finalStarted || Boolean(state.finalWinner));
     elements.finalControlCard.classList.toggle("hidden", !state.finalStarted || state.finalWaitingForSuddenDeath || Boolean(state.finalWinner));
     elements.finalSuddenCard.classList.toggle("hidden", !state.finalWaitingForSuddenDeath || Boolean(state.finalWinner));
+    elements.finalWinCard.classList.toggle("hidden", !state.finalWinner);
+    elements.finalWinnerName.textContent = state.finalWinner ? `${state.finalWinner} a gagne` : "-";
     elements.finalModeLabel.textContent = state.finalMode === "regular" ? "Questions" : `Mort subite ${state.suddenDeathRound}`;
     elements.finalCurrentPlayer.textContent = state.finalWinner ? "-" : getCurrentFinalPromptText();
     renderFinalBoard();
@@ -953,7 +1166,7 @@ function createFinalToken(result, fallbackText) {
 
 function getFinalStatusText() {
     if (state.finalWinner) {
-        return "La finale est terminee.";
+        return `${state.finalWinner} est le grand gagnant.`;
     }
 
     if (!state.finalStarted) {
@@ -1071,7 +1284,9 @@ function applyRoundElimination() {
         return true;
     }
 
-    const eliminatedIndex = Number.parseInt(state.eliminatedPlayerIndex, 10);
+    const eliminatedIndex = Number.isInteger(state.pendingEliminationIndex)
+        ? state.pendingEliminationIndex
+        : Number.parseInt(state.eliminatedPlayerIndex, 10);
 
     if (Number.isNaN(eliminatedIndex) || eliminatedIndex < 0 || eliminatedIndex >= state.players.length) {
         elements.eliminationError.textContent = "Choisis le joueur elimine avant de lancer la manche suivante.";
@@ -1079,6 +1294,8 @@ function applyRoundElimination() {
     }
 
     state.players.splice(eliminatedIndex, 1);
+    state.pendingEliminationIndex = null;
+    state.walkOfShamePlayerName = "";
     return true;
 }
 
@@ -1120,15 +1337,17 @@ function loadSavedPlayers() {
         const savedPlayers = JSON.parse(localStorage.getItem(SAVED_PLAYERS_KEY) || "[]");
 
         if (Array.isArray(savedPlayers) && savedPlayers.length > 0) {
-            state.players = savedPlayers.map((player, index) => normalizePlayerName(player, index));
+            state.registeredPlayers = savedPlayers.map((player, index) => normalizePlayerName(player, index));
+            state.players = [...state.registeredPlayers];
         }
     } catch (error) {
+        state.registeredPlayers = ["Joueur 1", "Joueur 2"];
         state.players = ["Joueur 1", "Joueur 2"];
     }
 }
 
 function savePlayers() {
-    const playersToSave = state.players.map((player, index) => normalizePlayerName(player, index));
+    const playersToSave = state.registeredPlayers.map((player, index) => normalizePlayerName(player, index));
     localStorage.setItem(SAVED_PLAYERS_KEY, JSON.stringify(playersToSave));
 }
 
@@ -1182,7 +1401,7 @@ function getPlayersAfterPendingElimination() {
 }
 
 function getPlayerNameByIndex(index) {
-    return state.players[index] || "-";
+    return state.registeredPlayers[index] || "-";
 }
 
 function sanitizeTimerValue(rawValue) {

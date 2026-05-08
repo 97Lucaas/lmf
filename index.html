@@ -205,6 +205,19 @@
             </div>
         </section>
 
+        <section class="walk-screen hidden" id="walk-screen">
+            <div class="walk-layout">
+                <div class="setup-card walk-card">
+                    <p class="eyebrow">Elimination confirmee</p>
+                    <h1 id="walk-title">Vous etes le maillon faible, au revoir.</h1>
+                    <p class="setup-copy" id="walk-copy">La manche suivante demarrera quand tu seras pret.</p>
+                    <div class="setup-actions">
+                        <button type="button" id="walk-next-round" class="primary-button">Passer a la manche suivante</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <section class="final-screen hidden" id="final-screen">
             <div class="final-layout">
                 <div class="stats-header">
@@ -233,6 +246,15 @@
                     <p class="setup-copy">Egalite apres les cinq questions.</p>
                     <div class="setup-actions">
                         <button type="button" id="start-sudden-death" class="primary-button">Commencer la mort subite</button>
+                    </div>
+                </div>
+
+                <div class="setup-card final-win-card hidden" id="final-win-card">
+                    <p class="eyebrow">Partie terminee</p>
+                    <h2 id="final-winner-name">-</h2>
+                    <p class="setup-copy">La partie est finie. Tu peux relancer une nouvelle configuration.</p>
+                    <div class="setup-actions">
+                        <button type="button" id="play-again" class="primary-button">Rejouer</button>
                     </div>
                 </div>
             </div>
