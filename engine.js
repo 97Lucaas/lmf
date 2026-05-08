@@ -1,8 +1,15 @@
 const DEFAULT_PRIZES = [50, 100, 200, 400, 600, 1000, 1500, 3000, 5000];
 const DEFAULT_TIMER_SECONDS = 150;
+const SAVED_PLAYERS_KEY = "lmf.players";
+const AMBIENCE_TRACKS = {
+    voting: "sounds/voting.mp3",
+    penalty: "sounds/Penalty_Shootout.mp3",
+    suddenDeath: "sounds/sudden_death.mp3"
+};
 
 const state = {
     players: ["Joueur 1", "Joueur 2"],
+    basePrizes: [...DEFAULT_PRIZES],
     prizes: [...DEFAULT_PRIZES],
     timerSeconds: DEFAULT_TIMER_SECONDS,
     startingPlayerIndex: 0,
@@ -17,17 +24,31 @@ const state = {
     timerStopped: true,
     intervalId: null,
     roundAudio: null,
+    ambienceAudio: null,
+    ambienceTrack: "",
     gameStarted: false,
     roundEnded: false,
     roundEndReason: "",
     currentScreen: "setup",
     roundPlayerStats: [],
-    rankedRoundStats: []
+    rankedRoundStats: [],
+    isTripleRound: false,
+    finalReady: false,
+    finalists: [],
+    finalStrongestPlayer: "",
+    finalStarted: false,
+    finalCurrentPlayerIndex: 0,
+    finalMode: "regular",
+    finalWaitingForSuddenDeath: false,
+    finalResults: [],
+    suddenDeathRound: 0,
+    finalWinner: ""
 };
 
 const elements = {};
 
 window.addEventListener("DOMContentLoaded", () => {
+    loadSavedPlayers();
     cacheElements();
     bindSetupEvents();
     bindKeyboardEvents();
@@ -39,6 +60,7 @@ function cacheElements() {
     elements.setupScreen = document.getElementById("setup-screen");
     elements.gameScreen = document.getElementById("game-screen");
     elements.statsScreen = document.getElementById("stats-screen");
+    elements.finalScreen = document.getElementById("final-screen");
     elements.playersList = document.getElementById("players-list");
     elements.startingPlayer = document.getElementById("starting-player");
     elements.timerSeconds = document.getElementById("timer-seconds");
@@ -63,6 +85,18 @@ function cacheElements() {
     elements.eliminatedPlayer = document.getElementById("eliminated-player");
     elements.eliminationError = document.getElementById("elimination-error");
     elements.nextRoundButton = document.getElementById("next-round");
+    elements.finalTitle = document.getElementById("final-title");
+    elements.finalStatus = document.getElementById("final-status");
+    elements.finalChoiceCard = document.getElementById("final-choice-card");
+    elements.finalStrongestPlayer = document.getElementById("final-strongest-player");
+    elements.finalTakeHand = document.getElementById("final-take-hand");
+    elements.finalLeaveHand = document.getElementById("final-leave-hand");
+    elements.finalBoard = document.getElementById("final-board");
+    elements.finalControlCard = document.getElementById("final-control-card");
+    elements.finalModeLabel = document.getElementById("final-mode-label");
+    elements.finalCurrentPlayer = document.getElementById("final-current-player");
+    elements.finalSuddenCard = document.getElementById("final-sudden-card");
+    elements.startSuddenDeath = document.getElementById("start-sudden-death");
     elements.strongestPlayerName = document.getElementById("strongest-player-name");
     elements.strongestPlayerCorrect = document.getElementById("strongest-player-correct");
     elements.strongestPlayerWrong = document.getElementById("strongest-player-wrong");
@@ -78,10 +112,12 @@ function cacheElements() {
 function bindSetupEvents() {
     document.getElementById("add-player").addEventListener("click", () => {
         state.players.push("Nouveau joueur");
+        savePlayers();
         renderSetup();
     });
 
     document.getElementById("reset-prizes").addEventListener("click", () => {
+        state.basePrizes = [...DEFAULT_PRIZES];
         state.prizes = [...DEFAULT_PRIZES];
         renderSetup();
     });
@@ -90,13 +126,16 @@ function bindSetupEvents() {
     document.getElementById("back-to-setup").addEventListener("click", returnToSetup);
     document.getElementById("go-to-stats").addEventListener("click", goToStatisticsScreen);
     elements.nextRoundButton.addEventListener("click", startNextRound);
+    elements.finalTakeHand.addEventListener("click", () => startFinal(true));
+    elements.finalLeaveHand.addEventListener("click", () => startFinal(false));
+    elements.startSuddenDeath.addEventListener("click", startSuddenDeath);
 
     elements.timerSeconds.addEventListener("change", (event) => {
         elements.timerSeconds.value = sanitizeTimerValue(event.target.value);
     });
 
     elements.eliminateEachRound.addEventListener("change", (event) => {
-        state.eliminateEachRound = event.target.checked;
+        state.eliminateEachRound = !event.target.checked;
     });
 
     elements.eliminatedPlayer.addEventListener("change", (event) => {
@@ -108,6 +147,20 @@ function bindSetupEvents() {
 
 function bindKeyboardEvents() {
     document.addEventListener("keyup", (event) => {
+        if (state.gameStarted && state.currentScreen === "final" && state.finalStarted && !state.finalWinner) {
+            const finalKey = event.key.toLowerCase();
+
+            if (finalKey === "v") {
+                answerFinalQuestion(true);
+            }
+
+            if (finalKey === "n") {
+                answerFinalQuestion(false);
+            }
+
+            return;
+        }
+
         if (!state.gameStarted || state.currentScreen !== "game" || state.roundEnded) {
             return;
         }
@@ -137,11 +190,12 @@ function bindKeyboardEvents() {
 }
 
 function renderSetup() {
+    state.prizes = [...state.basePrizes];
     renderPlayersList();
     renderStartingPlayerOptions();
     renderPrizesList();
     elements.timerSeconds.value = state.timerSeconds;
-    elements.eliminateEachRound.checked = state.eliminateEachRound;
+    elements.eliminateEachRound.checked = !state.eliminateEachRound;
     updateStartGameButtonLabel();
 }
 
@@ -158,6 +212,7 @@ function renderPlayersList() {
         input.placeholder = "Prenom du joueur";
         input.addEventListener("input", (event) => {
             state.players[index] = event.target.value;
+            savePlayers();
             renderStartingPlayerOptions();
         });
 
@@ -171,6 +226,7 @@ function renderPlayersList() {
             }
 
             state.players.splice(index, 1);
+            savePlayers();
             if (state.currentPlayerIndex >= state.players.length) {
                 state.currentPlayerIndex = 0;
             }
@@ -217,6 +273,7 @@ function renderPrizesList() {
         input.value = prize;
         input.addEventListener("input", (event) => {
             state.prizes[index] = sanitizePrizeValue(event.target.value);
+            state.basePrizes[index] = state.prizes[index];
         });
 
         row.appendChild(label);
@@ -236,17 +293,22 @@ function startGameFromSetup() {
     }
 
     state.players = cleanedPlayers;
-    state.prizes = prizes;
+    savePlayers();
+    state.basePrizes = prizes;
     state.timerSeconds = timerValue;
-    state.eliminateEachRound = elements.eliminateEachRound.checked;
+    state.eliminateEachRound = !elements.eliminateEachRound.checked;
     state.eliminatedPlayerIndex = "";
     state.startingPlayerIndex = getAlphabeticalFirstPlayerIndex(state.players);
     state.currentPlayerIndex = state.startingPlayerIndex;
     state.round = 1;
     state.totalBank = 0;
+    state.finalReady = false;
+    state.finalists = [];
+    state.finalWinner = "";
     state.gameStarted = true;
     elements.setupError.textContent = "";
 
+    stopAmbienceAudio();
     initializeRoundState();
     switchScreen("game");
     syncGameBoard();
@@ -260,6 +322,7 @@ function returnToSetup() {
     clearInterval(state.intervalId);
     state.intervalId = null;
     stopRoundAudio();
+    stopAmbienceAudio();
     switchScreen("setup");
     renderSetup();
 }
@@ -269,9 +332,12 @@ function switchScreen(screenName) {
     elements.setupScreen.classList.toggle("hidden", screenName !== "setup");
     elements.gameScreen.classList.toggle("hidden", screenName !== "game");
     elements.statsScreen.classList.toggle("hidden", screenName !== "stats");
+    elements.finalScreen.classList.toggle("hidden", screenName !== "final");
 }
 
 function initializeRoundState() {
+    state.isTripleRound = isFinalClassicRound();
+    state.prizes = getPrizesForCurrentRound();
     state.currentPlayerIndex = state.startingPlayerIndex;
     state.currentStep = state.prizes.length > 0 ? 1 : 0;
     state.roundBank = 0;
@@ -337,7 +403,7 @@ function updateCurrentPlayerDisplay() {
 }
 
 function updateRoundDisplay() {
-    elements.roundNumber.textContent = String(state.round);
+    elements.roundNumber.textContent = state.isTripleRound ? `${state.round} x3` : String(state.round);
 }
 
 function updateTimerDisplay() {
@@ -515,9 +581,50 @@ function stopRoundAudio() {
     state.roundAudio = null;
 }
 
+function playAmbienceAudio(track) {
+    if (!track) {
+        return;
+    }
+
+    if (state.ambienceAudio && state.ambienceTrack === track) {
+        state.ambienceAudio.play().catch(() => {});
+        return;
+    }
+
+    stopAmbienceAudio();
+    state.ambienceTrack = track;
+    state.ambienceAudio = new Audio(track);
+    state.ambienceAudio.loop = true;
+    state.ambienceAudio.play().catch(() => {
+        stopAmbienceAudio();
+    });
+}
+
+function stopAmbienceAudio() {
+    if (!state.ambienceAudio) {
+        state.ambienceTrack = "";
+        return;
+    }
+
+    state.ambienceAudio.pause();
+    state.ambienceAudio.currentTime = 0;
+    state.ambienceAudio = null;
+    state.ambienceTrack = "";
+}
+
 function goToStatisticsScreen() {
     state.rankedRoundStats = rankRoundStats();
+    state.finalReady = isFinalClassicRound();
+    if (state.finalReady) {
+        prepareFinalistsFromCurrentRound();
+    }
     renderStatistics();
+    stopRoundAudio();
+    if (state.finalReady) {
+        stopAmbienceAudio();
+    } else {
+        playAmbienceAudio(AMBIENCE_TRACKS.voting);
+    }
     switchScreen("stats");
 }
 
@@ -567,7 +674,7 @@ function renderStatsRows(rankedStats) {
 }
 
 function renderEliminationPicker() {
-    const shouldAskForElimination = state.eliminateEachRound && state.players.length > 1;
+    const shouldAskForElimination = state.eliminateEachRound && state.players.length > 1 && !state.finalReady;
     elements.eliminationCard.classList.toggle("hidden", !shouldAskForElimination);
     elements.eliminationError.textContent = "";
 
@@ -601,6 +708,11 @@ function updateStartGameButtonLabel() {
 }
 
 function updateNextRoundButtonLabel() {
+    if (state.finalReady) {
+        elements.nextRoundButton.textContent = "Acceder a la finale";
+        return;
+    }
+
     const playerName = getNextStartingPlayerNamePreview();
     elements.nextRoundButton.textContent = `Manche suivante - ${playerName} commence`;
 }
@@ -624,6 +736,11 @@ function rankRoundStats() {
 }
 
 function startNextRound() {
+    if (state.finalReady) {
+        showFinalScreen();
+        return;
+    }
+
     if (!applyRoundElimination()) {
         return;
     }
@@ -632,9 +749,321 @@ function startNextRound() {
     state.round += 1;
     state.timerSeconds = Math.max(10, state.timerSeconds - 10);
     initializeRoundState();
+    stopAmbienceAudio();
     switchScreen("game");
     syncGameBoard();
     startTimer();
+}
+
+function isFinalClassicRound() {
+    if (state.eliminateEachRound) {
+        return state.players.length === 2;
+    }
+
+    return state.round === 8;
+}
+
+function getPrizesForCurrentRound() {
+    const multiplier = state.isTripleRound ? 3 : 1;
+    return state.basePrizes.map((prize) => prize * multiplier);
+}
+
+function prepareFinalistsFromCurrentRound() {
+    const rankedNames = state.rankedRoundStats.map((playerStats) => playerStats.name);
+    const finalists = rankedNames.filter((name) => state.players.includes(name)).slice(0, 2);
+
+    if (finalists.length < 2) {
+        state.players.forEach((player) => {
+            if (finalists.length < 2 && !finalists.includes(player)) {
+                finalists.push(player);
+            }
+        });
+    }
+
+    state.finalists = finalists;
+    state.finalStrongestPlayer = finalists[0] || "";
+}
+
+function showFinalScreen() {
+    stopRoundAudio();
+    resetFinalState();
+    renderFinal();
+    playAmbienceAudio(AMBIENCE_TRACKS.penalty);
+    switchScreen("final");
+}
+
+function resetFinalState() {
+    state.finalStarted = false;
+    state.finalCurrentPlayerIndex = 0;
+    state.finalMode = "regular";
+    state.finalWaitingForSuddenDeath = false;
+    state.suddenDeathRound = 0;
+    state.finalWinner = "";
+    state.finalResults = state.finalists.map((player) => ({
+        name: player,
+        regular: [],
+        suddenDeath: []
+    }));
+}
+
+function startFinal(strongestTakesHand) {
+    if (state.finalists.length < 2) {
+        return;
+    }
+
+    const strongestIndex = Math.max(0, state.finalists.indexOf(state.finalStrongestPlayer));
+    state.finalCurrentPlayerIndex = strongestTakesHand ? strongestIndex : getOtherFinalistIndex(strongestIndex);
+    state.finalStarted = true;
+    renderFinal();
+}
+
+function answerFinalQuestion(isCorrect) {
+    if (!state.finalStarted || state.finalWaitingForSuddenDeath || state.finalWinner) {
+        return;
+    }
+
+    const playerResult = state.finalResults[state.finalCurrentPlayerIndex];
+
+    if (!playerResult) {
+        return;
+    }
+
+    if (state.finalMode === "regular") {
+        playerResult.regular.push(isCorrect);
+        const winner = getRegularFinalWinner();
+
+        if (winner) {
+            concludeFinal(winner);
+            return;
+        }
+
+        if (hasRegularFinalTie()) {
+            state.finalWaitingForSuddenDeath = true;
+            stopAmbienceAudio();
+            renderFinal();
+            return;
+        }
+
+        state.finalCurrentPlayerIndex = getNextRegularFinalPlayerIndex();
+        renderFinal();
+        return;
+    }
+
+    playerResult.suddenDeath[state.suddenDeathRound - 1] = isCorrect;
+
+    if (isSuddenDeathRoundComplete()) {
+        const winner = getSuddenDeathWinner();
+
+        if (winner) {
+            concludeFinal(winner);
+            return;
+        }
+
+        state.suddenDeathRound += 1;
+        state.finalCurrentPlayerIndex = 0;
+        renderFinal();
+        return;
+    }
+
+    state.finalCurrentPlayerIndex = getOtherFinalistIndex(state.finalCurrentPlayerIndex);
+    renderFinal();
+}
+
+function concludeFinal(winnerName) {
+    state.finalWinner = winnerName;
+    renderFinal();
+}
+
+function startSuddenDeath() {
+    if (!state.finalWaitingForSuddenDeath || state.finalWinner) {
+        return;
+    }
+
+    state.finalWaitingForSuddenDeath = false;
+    state.finalMode = "suddenDeath";
+    state.suddenDeathRound = 1;
+    state.finalCurrentPlayerIndex = 0;
+    state.finalResults.forEach((playerResult) => {
+        playerResult.suddenDeath = [];
+    });
+    playAmbienceAudio(AMBIENCE_TRACKS.suddenDeath);
+    renderFinal();
+}
+
+function renderFinal() {
+    elements.finalTitle.textContent = state.finalWinner ? `${state.finalWinner} remporte la finale` : "Duel final";
+    elements.finalStatus.textContent = getFinalStatusText();
+    elements.finalStrongestPlayer.textContent = `Maillon fort: ${state.finalStrongestPlayer || "-"}`;
+    elements.finalChoiceCard.classList.toggle("hidden", state.finalStarted || Boolean(state.finalWinner));
+    elements.finalControlCard.classList.toggle("hidden", !state.finalStarted || state.finalWaitingForSuddenDeath || Boolean(state.finalWinner));
+    elements.finalSuddenCard.classList.toggle("hidden", !state.finalWaitingForSuddenDeath || Boolean(state.finalWinner));
+    elements.finalModeLabel.textContent = state.finalMode === "regular" ? "Questions" : `Mort subite ${state.suddenDeathRound}`;
+    elements.finalCurrentPlayer.textContent = state.finalWinner ? "-" : getCurrentFinalPromptText();
+    renderFinalBoard();
+}
+
+function renderFinalBoard() {
+    elements.finalBoard.innerHTML = "";
+
+    state.finalResults.forEach((playerResult) => {
+        const row = document.createElement("div");
+        row.className = "final-row";
+
+        const name = document.createElement("div");
+        name.className = "final-name";
+        name.textContent = playerResult.name;
+        row.appendChild(name);
+
+        getVisibleFinalResults(playerResult).forEach((result, index) => {
+            row.appendChild(createFinalToken(result, String(index + 1)));
+        });
+
+        elements.finalBoard.appendChild(row);
+    });
+}
+
+function getVisibleFinalResults(playerResult) {
+    if (state.finalMode === "regular") {
+        return Array.from({ length: 5 }, (_, index) => playerResult.regular[index]);
+    }
+
+    const visibleStartIndex = Math.floor((Math.max(1, state.suddenDeathRound) - 1) / 5) * 5;
+    return Array.from({ length: 5 }, (_, index) => playerResult.suddenDeath[visibleStartIndex + index]);
+}
+
+function createFinalToken(result, fallbackText) {
+    const token = document.createElement("div");
+    token.className = "final-token";
+
+    if (result === true) {
+        token.classList.add("correct");
+        token.textContent = "V";
+        return token;
+    }
+
+    if (result === false) {
+        token.classList.add("wrong");
+        token.textContent = "X";
+        return token;
+    }
+
+    token.textContent = fallbackText;
+    return token;
+}
+
+function getFinalStatusText() {
+    if (state.finalWinner) {
+        return "La finale est terminee.";
+    }
+
+    if (!state.finalStarted) {
+        const otherPlayer = state.finalists.find((player) => player !== state.finalStrongestPlayer) || "-";
+        return `${state.finalStrongestPlayer || "-"} peut prendre la main ou la laisser a ${otherPlayer}.`;
+    }
+
+    if (state.finalWaitingForSuddenDeath) {
+        return "Egalite apres cinq questions. Lance la mort subite quand tu es pret.";
+    }
+
+    if (state.finalMode === "suddenDeath") {
+        return "Egalite apres cinq questions: mort subite.";
+    }
+
+    return "Chaque joueur repond a cinq questions au maximum.";
+}
+
+function getCurrentFinalPromptText() {
+    const playerName = state.finalists[state.finalCurrentPlayerIndex] || "-";
+    const result = state.finalResults[state.finalCurrentPlayerIndex];
+
+    if (state.finalMode === "suddenDeath") {
+        return `${playerName} - question de mort subite ${state.suddenDeathRound}`;
+    }
+
+    return `${playerName} - question ${result ? result.regular.length + 1 : 1}`;
+}
+
+function getRegularFinalWinner() {
+    const left = state.finalResults[0];
+    const right = state.finalResults[1];
+
+    if (!left || !right) {
+        return "";
+    }
+
+    const leftScore = countCorrect(left.regular);
+    const rightScore = countCorrect(right.regular);
+    const leftRemaining = 5 - left.regular.length;
+    const rightRemaining = 5 - right.regular.length;
+
+    if (leftScore > rightScore + rightRemaining) {
+        return left.name;
+    }
+
+    if (rightScore > leftScore + leftRemaining) {
+        return right.name;
+    }
+
+    if (left.regular.length === 5 && right.regular.length === 5 && leftScore !== rightScore) {
+        return leftScore > rightScore ? left.name : right.name;
+    }
+
+    return "";
+}
+
+function hasRegularFinalTie() {
+    const left = state.finalResults[0];
+    const right = state.finalResults[1];
+
+    return left && right
+        && left.regular.length === 5
+        && right.regular.length === 5
+        && countCorrect(left.regular) === countCorrect(right.regular);
+}
+
+function getNextRegularFinalPlayerIndex() {
+    const currentPlayer = state.finalResults[state.finalCurrentPlayerIndex];
+    const otherIndex = getOtherFinalistIndex(state.finalCurrentPlayerIndex);
+    const otherPlayer = state.finalResults[otherIndex];
+
+    if (otherPlayer && otherPlayer.regular.length < 5 && otherPlayer.regular.length <= currentPlayer.regular.length) {
+        return otherIndex;
+    }
+
+    if (currentPlayer.regular.length < 5) {
+        return state.finalCurrentPlayerIndex;
+    }
+
+    return otherIndex;
+}
+
+function isSuddenDeathRoundComplete() {
+    return state.finalResults.every((playerResult) => playerResult.suddenDeath.length >= state.suddenDeathRound);
+}
+
+function getSuddenDeathWinner() {
+    const left = state.finalResults[0];
+    const right = state.finalResults[1];
+    const leftResult = left.suddenDeath[state.suddenDeathRound - 1];
+    const rightResult = right.suddenDeath[state.suddenDeathRound - 1];
+
+    if (leftResult === true && rightResult === false) {
+        return left.name;
+    }
+
+    if (rightResult === true && leftResult === false) {
+        return right.name;
+    }
+
+    return "";
+}
+
+function getOtherFinalistIndex(index) {
+    return index === 0 ? 1 : 0;
+}
+
+function countCorrect(results) {
+    return results.filter(Boolean).length;
 }
 
 function applyRoundElimination() {
@@ -684,6 +1113,23 @@ function getCappedAmount(amount) {
 function normalizePlayerName(player, index) {
     const trimmed = String(player || "").trim();
     return trimmed || `Joueur ${index + 1}`;
+}
+
+function loadSavedPlayers() {
+    try {
+        const savedPlayers = JSON.parse(localStorage.getItem(SAVED_PLAYERS_KEY) || "[]");
+
+        if (Array.isArray(savedPlayers) && savedPlayers.length > 0) {
+            state.players = savedPlayers.map((player, index) => normalizePlayerName(player, index));
+        }
+    } catch (error) {
+        state.players = ["Joueur 1", "Joueur 2"];
+    }
+}
+
+function savePlayers() {
+    const playersToSave = state.players.map((player, index) => normalizePlayerName(player, index));
+    localStorage.setItem(SAVED_PLAYERS_KEY, JSON.stringify(playersToSave));
 }
 
 function getAlphabeticalFirstPlayerIndex(players) {

@@ -42,8 +42,8 @@
                         </label>
                         <p class="hint">Le temps se regle par pas de 10 secondes.</p>
                         <label class="check-field">
-                            <input id="eliminate-each-round" type="checkbox" checked>
-                            <span>Eliminer un joueur a chaque manche</span>
+                            <input id="eliminate-each-round" type="checkbox">
+                            <span>Ne pas eliminer de joueurs apres les manches</span>
                         </label>
                         <div class="keybinds">
                             <p>Raccourcis disponibles</p>
@@ -201,6 +201,39 @@
 
                 <div class="setup-actions">
                     <button type="button" id="next-round" class="primary-button">Manche suivante</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="final-screen hidden" id="final-screen">
+            <div class="final-layout">
+                <div class="stats-header">
+                    <p class="eyebrow">Finale</p>
+                    <h1 id="final-title">Duel final</h1>
+                    <p class="setup-copy" id="final-status">Le maillon fort choisit de prendre ou de laisser la main.</p>
+                </div>
+
+                <div class="setup-card final-choice-card" id="final-choice-card">
+                    <h2 id="final-strongest-player">Maillon fort: -</h2>
+                    <div class="setup-actions">
+                        <button type="button" id="final-take-hand" class="primary-button">Prendre la main</button>
+                        <button type="button" id="final-leave-hand" class="toolbar-button">Laisser la main</button>
+                    </div>
+                </div>
+
+                <div class="final-board" id="final-board"></div>
+
+                <div class="setup-card final-control-card hidden" id="final-control-card">
+                    <p class="eyebrow" id="final-mode-label">Questions</p>
+                    <h2 id="final-current-player">-</h2>
+                </div>
+
+                <div class="setup-card final-sudden-card hidden" id="final-sudden-card">
+                    <h2>Mort subite</h2>
+                    <p class="setup-copy">Egalite apres les cinq questions.</p>
+                    <div class="setup-actions">
+                        <button type="button" id="start-sudden-death" class="primary-button">Commencer la mort subite</button>
+                    </div>
                 </div>
             </div>
         </section>
