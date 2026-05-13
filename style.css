@@ -453,23 +453,50 @@ select {
 
 .final-name {
     padding: 0 18px;
-    background:
-        radial-gradient(circle at 25% 20%, rgba(255, 255, 255, 0.7), transparent 20%),
-        linear-gradient(135deg, #141923, #d8dce7 45%, #141923 75%);
+    background: #274a94;
+    border: 1px solid rgba(166, 197, 255, 0.35);
     font-size: 20px;
+    font-weight: 700;
 }
 
 .final-token {
-    background: linear-gradient(135deg, #0c3d67, #0d6aa0);
+    background: #12395c;
+    border: 1px solid rgba(102, 164, 219, 0.28);
     font-size: 26px;
 }
 
 .final-token.correct {
-    background: radial-gradient(circle at 35% 25%, #a6ff9f, #138a32 65%, #063b18);
+    background: #1f9b4b;
 }
 
 .final-token.wrong {
-    background: radial-gradient(circle at 35% 25%, #ffaaa6, #9e2f37 65%, #411116);
+    background: #c64047;
+}
+
+.final-token.pending {
+    opacity: 0.34;
+}
+
+.final-token.settled {
+    opacity: 0.34;
+}
+
+.final-token.hidden-slot {
+    opacity: 0;
+    border-color: transparent;
+    box-shadow: none;
+    pointer-events: none;
+}
+
+.final-token.current,
+.final-token.correct,
+.final-token.wrong {
+    opacity: 1;
+}
+
+.final-token.correct.settled,
+.final-token.wrong.settled {
+    opacity: 0.34;
 }
 
 .stats-inline {
@@ -537,6 +564,7 @@ select {
         flex-direction: column;
         align-items: stretch;
     }
+
 
     .status-cluster {
         flex-direction: column;
